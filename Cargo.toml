@@ -1,0 +1,4 @@
+# my_workspace/Cargo.toml
+[workspace]
+members = ["ecs-basic", "ecs-slotmap", "ecs-parallel"]
+resolver = "3"                                         # Optional: Specify the dependency resolver version
