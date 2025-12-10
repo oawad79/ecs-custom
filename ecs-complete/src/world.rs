@@ -71,10 +71,10 @@ impl World {
     pub fn despawn(&mut self, entity: Entity) -> bool {
         if let Some(location) = self.entities.remove(entity) {
             let archetype = self.archetypes.get_mut(location.archetype).unwrap();
-            let swapped_entity = archetype.remove_entity(location.index);
+            let (removed_entity, swapped_entity) = archetype.remove_entity(location.index);
 
-            if swapped_entity != entity {
-                if let Some(swapped_location) = self.entities.get_mut(swapped_entity) {
+            if let Some(swapped) = swapped_entity {
+                if let Some(swapped_location) = self.entities.get_mut(swapped) {
                     swapped_location.index = location.index;
                 }
             }
@@ -168,6 +168,148 @@ impl World {
         Ok(())
     }
 
+    fn move_entity_with_component<C: Component>(
+        &mut self,
+        entity: Entity,
+        from_archetype: usize,
+        to_archetype: usize,
+        new_component: C,
+    ) -> Result<()> {
+        // Get current location and verify entity exists
+        let from_index = self
+            .entities
+            .get(entity)
+            .ok_or(EcsError::EntityNotFound(entity))?
+            .index;
+
+        // Get the types from source archetype
+        let from_types: Vec<TypeId> = self
+            .archetypes
+            .get(from_archetype)
+            .ok_or(EcsError::ArchetypeNotFound(from_archetype))?
+            .types()
+            .to_vec();
+
+        let to_index;
+        let swapped_entity;
+
+        // Scope for mutable borrow of archetypes
+        {
+            let (from_arch, to_arch) = self
+                .archetypes
+                .get_pair_mut(from_archetype, to_archetype)
+                .ok_or(EcsError::ArchetypeNotFound(to_archetype))?;
+
+            // Verify the index is valid
+            if from_index >= from_arch.len() {
+                return Err(EcsError::EntityNotFound(entity));
+            }
+
+            to_index = to_arch.len();
+
+            // Push entity to target archetype first
+            to_arch.push_entity(entity);
+
+            // Copy all matching components from source to destination
+            for &type_id in &from_types {
+                to_arch.copy_component_from(to_index, from_arch, from_index, type_id);
+            }
+
+            // Add the new component
+            to_arch.set_component(to_index, new_component);
+
+            // Remove entity from source archetype
+            let (_removed, swapped) = from_arch.remove_entity(from_index);
+            swapped_entity = swapped;
+        }
+
+        // Update entity location
+        let loc = self
+            .entities
+            .get_mut(entity)
+            .ok_or(EcsError::EntityNotFound(entity))?;
+        loc.archetype = to_archetype;
+        loc.index = to_index;
+
+        // Update swapped entity location if needed
+        if let Some(swapped) = swapped_entity {
+            if let Some(swapped_location) = self.entities.get_mut(swapped) {
+                swapped_location.index = from_index;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn move_entity(
+        &mut self,
+        entity: Entity,
+        from_archetype: usize,
+        to_archetype: usize,
+    ) -> Result<()> {
+        // Get current location and verify entity exists
+        let from_index = self
+            .entities
+            .get(entity)
+            .ok_or(EcsError::EntityNotFound(entity))?
+            .index;
+
+        // Get the types from target archetype (which is a subset of source)
+        let to_types: Vec<TypeId> = self
+            .archetypes
+            .get(to_archetype)
+            .ok_or(EcsError::ArchetypeNotFound(to_archetype))?
+            .types()
+            .to_vec();
+
+        let to_index;
+        let swapped_entity;
+
+        // Scope for mutable borrow of archetypes
+        {
+            let (from_arch, to_arch) = self
+                .archetypes
+                .get_pair_mut(from_archetype, to_archetype)
+                .ok_or(EcsError::ArchetypeNotFound(to_archetype))?;
+
+            // Verify the index is valid
+            if from_index >= from_arch.len() {
+                return Err(EcsError::EntityNotFound(entity));
+            }
+
+            to_index = to_arch.len();
+
+            // Push entity to target archetype first
+            to_arch.push_entity(entity);
+
+            // Copy all components that exist in target archetype
+            for &type_id in &to_types {
+                to_arch.copy_component_from(to_index, from_arch, from_index, type_id);
+            }
+
+            // Remove entity from source archetype
+            let (_removed, swapped) = from_arch.remove_entity(from_index);
+            swapped_entity = swapped;
+        }
+
+        // Update entity location
+        let loc = self
+            .entities
+            .get_mut(entity)
+            .ok_or(EcsError::EntityNotFound(entity))?;
+        loc.archetype = to_archetype;
+        loc.index = to_index;
+
+        // Update swapped entity location if needed
+        if let Some(swapped) = swapped_entity {
+            if let Some(swapped_location) = self.entities.get_mut(swapped) {
+                swapped_location.index = from_index;
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn remove<C: Component>(&mut self, entity: Entity) -> Result<C> {
         let location = self
             .entities
@@ -230,130 +372,6 @@ impl World {
                 let _ = self.move_entity(entity, from_archetype, to_archetype);
             }
         }
-    }
-
-    fn move_entity_with_component<C: Component>(
-        &mut self,
-        entity: Entity,
-        from_archetype: usize,
-        to_archetype: usize,
-        new_component: C,
-    ) -> Result<()> {
-        let from_index = self
-            .entities
-            .get(entity)
-            .ok_or(EcsError::EntityNotFound(entity))?
-            .index;
-
-        // Get the types from source archetype
-        let from_types: Vec<TypeId> = self
-            .archetypes
-            .get(from_archetype)
-            .ok_or(EcsError::ArchetypeNotFound(from_archetype))?
-            .types()
-            .to_vec();
-
-        let to_index;
-        let swapped_entity;
-
-        // Scope for mutable borrow of archetypes
-        {
-            let (from_arch, to_arch) = self
-                .archetypes
-                .get_pair_mut(from_archetype, to_archetype)
-                .ok_or(EcsError::ArchetypeNotFound(to_archetype))?;
-
-            to_index = to_arch.len();
-
-            // Push entity to target archetype first
-            to_arch.push_entity(entity);
-
-            // Copy all matching components from source to destination
-            for &type_id in &from_types {
-                to_arch.copy_component_from(to_index, from_arch, from_index, type_id);
-            }
-
-            // Add the new component
-            to_arch.set_component(to_index, new_component);
-
-            // Remove entity from source archetype
-            swapped_entity = from_arch.remove_entity(from_index);
-        }
-
-        // Update entity location
-        if let Some(loc) = self.entities.get_mut(entity) {
-            loc.archetype = to_archetype;
-            loc.index = to_index;
-        }
-
-        // Update swapped entity location if needed
-        if swapped_entity != entity {
-            if let Some(swapped_location) = self.entities.get_mut(swapped_entity) {
-                swapped_location.index = from_index;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn move_entity(
-        &mut self,
-        entity: Entity,
-        from_archetype: usize,
-        to_archetype: usize,
-    ) -> Result<()> {
-        let from_index = self
-            .entities
-            .get(entity)
-            .ok_or(EcsError::EntityNotFound(entity))?
-            .index;
-
-        // Get the types from target archetype (which is a subset of source)
-        let to_types: Vec<TypeId> = self
-            .archetypes
-            .get(to_archetype)
-            .ok_or(EcsError::ArchetypeNotFound(to_archetype))?
-            .types()
-            .to_vec();
-
-        let to_index;
-        let swapped_entity;
-
-        // Scope for mutable borrow of archetypes
-        {
-            let (from_arch, to_arch) = self
-                .archetypes
-                .get_pair_mut(from_archetype, to_archetype)
-                .ok_or(EcsError::ArchetypeNotFound(to_archetype))?;
-
-            to_index = to_arch.len();
-
-            // Push entity to target archetype first
-            to_arch.push_entity(entity);
-
-            // Copy all components that exist in target archetype
-            for &type_id in &to_types {
-                to_arch.copy_component_from(to_index, from_arch, from_index, type_id);
-            }
-
-            // Remove entity from source archetype
-            swapped_entity = from_arch.remove_entity(from_index);
-        }
-
-        // Update entity location
-        if let Some(loc) = self.entities.get_mut(entity) {
-            loc.archetype = to_archetype;
-            loc.index = to_index;
-        }
-
-        // Update swapped entity location if needed
-        if swapped_entity != entity {
-            if let Some(swapped_location) = self.entities.get_mut(swapped_entity) {
-                swapped_location.index = from_index;
-            }
-        }
-
-        Ok(())
     }
 
     pub fn query<Q: Query>(&mut self) -> QueryIter<Q> {

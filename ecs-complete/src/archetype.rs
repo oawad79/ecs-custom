@@ -155,8 +155,15 @@ impl Archetype {
         false
     }
 
-    pub fn remove_entity(&mut self, index: usize) -> Entity {
-        let entity = self.entities.swap_remove(index);
+    pub fn remove_entity(&mut self, index: usize) -> (Entity, Option<Entity>) {
+        // Get the entity that will be swapped in (if any)
+        let swapped_entity = if index < self.entities.len() - 1 {
+            Some(self.entities[self.entities.len() - 1])
+        } else {
+            None
+        };
+
+        let removed_entity = self.entities.swap_remove(index);
 
         for column in &mut self.columns {
             unsafe {
@@ -172,7 +179,7 @@ impl Archetype {
             }
         }
 
-        entity
+        (removed_entity, swapped_entity)
     }
 
     pub fn take_component<T: 'static>(&mut self, index: usize) -> Option<T> {
