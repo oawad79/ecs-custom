@@ -1,4 +1,5 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use ecs_complete::System;
 use ecs_complete::World;
 
 #[derive(Debug, Clone, Copy)]
@@ -102,24 +103,32 @@ fn query_mut_benchmark(c: &mut Criterion) {
 
 fn insert_component_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("insert_component");
+    group.sample_size(10);
 
     for size in [100, 1_000, 10_000].iter() {
-        let mut world = World::new();
-        let entities: Vec<_> = (0..*size)
-            .map(|i| {
-                world.spawn((Position {
-                    x: i as f32,
-                    y: 0.0,
-                },))
-            })
-            .collect();
-
-        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, _| {
-            b.iter(|| {
-                for &entity in &entities {
-                    world.insert(entity, Velocity { x: 1.0, y: 1.0 }).ok();
-                }
-            });
+        group.bench_function(BenchmarkId::from_parameter(size), |b| {
+            b.iter_with_setup(
+                || {
+                    let mut world = World::new();
+                    let entities: Vec<_> = (0..*size)
+                        .map(|i| {
+                            world.spawn((Position {
+                                x: i as f32,
+                                y: 0.0,
+                            },))
+                        })
+                        .collect();
+                    (world, entities)
+                },
+                |(mut world, mut entities)| {
+                    // Reverse iteration to avoid index issues
+                    entities.reverse();
+                    for &entity in &entities {
+                        let _ = world.insert(entity, Velocity { x: 1.0, y: 1.0 });
+                    }
+                    black_box(world);
+                },
+            );
         });
     }
 
@@ -128,27 +137,35 @@ fn insert_component_benchmark(c: &mut Criterion) {
 
 fn remove_component_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("remove_component");
+    group.sample_size(10);
 
     for size in [100, 1_000, 10_000].iter() {
-        let mut world = World::new();
-        let entities: Vec<_> = (0..*size)
-            .map(|i| {
-                world.spawn((
-                    Position {
-                        x: i as f32,
-                        y: 0.0,
-                    },
-                    Velocity { x: 1.0, y: 1.0 },
-                ))
-            })
-            .collect();
-
-        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, _| {
-            b.iter(|| {
-                for &entity in &entities {
-                    world.remove::<Velocity>(entity).ok();
-                }
-            });
+        group.bench_function(BenchmarkId::from_parameter(size), |b| {
+            b.iter_with_setup(
+                || {
+                    let mut world = World::new();
+                    let entities: Vec<_> = (0..*size)
+                        .map(|i| {
+                            world.spawn((
+                                Position {
+                                    x: i as f32,
+                                    y: 0.0,
+                                },
+                                Velocity { x: 1.0, y: 1.0 },
+                            ))
+                        })
+                        .collect();
+                    (world, entities)
+                },
+                |(mut world, mut entities)| {
+                    // Reverse iteration to avoid index issues
+                    entities.reverse();
+                    for &entity in &entities {
+                        let _ = world.remove::<Velocity>(entity);
+                    }
+                    black_box(world);
+                },
+            );
         });
     }
 
@@ -162,7 +179,7 @@ fn despawn_benchmark(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
             b.iter(|| {
                 let mut world = World::new();
-                let entities: Vec<_> = (0..size)
+                let mut entities: Vec<_> = (0..size)
                     .map(|i| {
                         world.spawn((Position {
                             x: i as f32,
@@ -171,6 +188,8 @@ fn despawn_benchmark(c: &mut Criterion) {
                     })
                     .collect();
 
+                // Reverse to avoid index issues with swap_remove
+                entities.reverse();
                 for entity in entities {
                     world.despawn(entity);
                 }
@@ -250,15 +269,12 @@ fn system_benchmark(c: &mut Criterion) {
             ));
         }
 
-        let mut system =
-            ecs_complete::system::QuerySystem::new(|(_pos, _vel): (&mut Position, &Velocity)| {
-                _pos.x += _vel.x;
-                _pos.y += _vel.y;
-            });
-
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, _| {
             b.iter(|| {
-                system.run(&mut world);
+                for (pos, vel) in world.query::<(&mut Position, &Velocity)>() {
+                    pos.x += vel.x;
+                    pos.y += vel.y;
+                }
             });
         });
     }

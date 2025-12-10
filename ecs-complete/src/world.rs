@@ -239,12 +239,11 @@ impl World {
         to_archetype: usize,
         new_component: C,
     ) -> Result<()> {
-        let location = self
+        let from_index = self
             .entities
             .get(entity)
-            .ok_or(EcsError::EntityNotFound(entity))?;
-
-        let from_index = location.index;
+            .ok_or(EcsError::EntityNotFound(entity))?
+            .index;
 
         // Get the types from source archetype
         let from_types: Vec<TypeId> = self
@@ -254,33 +253,32 @@ impl World {
             .types()
             .to_vec();
 
-        // Ensure target archetype has columns initialized
-        let to_arch = self.archetypes.get(to_archetype).unwrap();
-        if to_arch.is_empty() {
-            // Initialize columns if needed - this should already be done during archetype creation
+        let to_index;
+        let swapped_entity;
+
+        // Scope for mutable borrow of archetypes
+        {
+            let (from_arch, to_arch) = self
+                .archetypes
+                .get_pair_mut(from_archetype, to_archetype)
+                .ok_or(EcsError::ArchetypeNotFound(to_archetype))?;
+
+            to_index = to_arch.len();
+
+            // Push entity to target archetype first
+            to_arch.push_entity(entity);
+
+            // Copy all matching components from source to destination
+            for &type_id in &from_types {
+                to_arch.copy_component_from(to_index, from_arch, from_index, type_id);
+            }
+
+            // Add the new component
+            to_arch.set_component(to_index, new_component);
+
+            // Remove entity from source archetype
+            swapped_entity = from_arch.remove_entity(from_index);
         }
-
-        // Get mutable references to both archetypes
-        let (from_arch, to_arch) = self
-            .archetypes
-            .get_pair_mut(from_archetype, to_archetype)
-            .ok_or(EcsError::ArchetypeNotFound(to_archetype))?;
-
-        let to_index = to_arch.len();
-
-        // Push entity to target archetype first (this increments len and adds ticks)
-        to_arch.push_entity(entity);
-
-        // Copy all matching components from source to destination
-        for &type_id in &from_types {
-            to_arch.copy_component_from(to_index, from_arch, from_index, type_id);
-        }
-
-        // Add the new component
-        to_arch.set_component(to_index, new_component);
-
-        // Remove entity from source archetype
-        let swapped_entity = from_arch.remove_entity(from_index);
 
         // Update entity location
         if let Some(loc) = self.entities.get_mut(entity) {
@@ -304,12 +302,11 @@ impl World {
         from_archetype: usize,
         to_archetype: usize,
     ) -> Result<()> {
-        let location = self
+        let from_index = self
             .entities
             .get(entity)
-            .ok_or(EcsError::EntityNotFound(entity))?;
-
-        let from_index = location.index;
+            .ok_or(EcsError::EntityNotFound(entity))?
+            .index;
 
         // Get the types from target archetype (which is a subset of source)
         let to_types: Vec<TypeId> = self
@@ -319,24 +316,29 @@ impl World {
             .types()
             .to_vec();
 
-        // Get mutable references to both archetypes
-        let (from_arch, to_arch) = self
-            .archetypes
-            .get_pair_mut(from_archetype, to_archetype)
-            .ok_or(EcsError::ArchetypeNotFound(to_archetype))?;
+        let to_index;
+        let swapped_entity;
 
-        let to_index = to_arch.len();
+        // Scope for mutable borrow of archetypes
+        {
+            let (from_arch, to_arch) = self
+                .archetypes
+                .get_pair_mut(from_archetype, to_archetype)
+                .ok_or(EcsError::ArchetypeNotFound(to_archetype))?;
 
-        // Push entity to target archetype first (this increments len and adds ticks)
-        to_arch.push_entity(entity);
+            to_index = to_arch.len();
 
-        // Copy all components that exist in target archetype
-        for &type_id in &to_types {
-            to_arch.copy_component_from(to_index, from_arch, from_index, type_id);
+            // Push entity to target archetype first
+            to_arch.push_entity(entity);
+
+            // Copy all components that exist in target archetype
+            for &type_id in &to_types {
+                to_arch.copy_component_from(to_index, from_arch, from_index, type_id);
+            }
+
+            // Remove entity from source archetype
+            swapped_entity = from_arch.remove_entity(from_index);
         }
-
-        // Remove entity from source archetype
-        let swapped_entity = from_arch.remove_entity(from_index);
 
         // Update entity location
         if let Some(loc) = self.entities.get_mut(entity) {

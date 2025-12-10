@@ -371,4 +371,28 @@ mod tests {
         }
         assert_eq!(count, 1000);
     }
+
+    #[test]
+    fn test_insert_multiple_entities() {
+        let mut world = World::new();
+
+        let entities: Vec<_> = (0..100)
+            .map(|i| {
+                world.spawn((Position {
+                    x: i as f32,
+                    y: 0.0,
+                },))
+            })
+            .collect();
+
+        for &entity in &entities {
+            world.insert(entity, Velocity { x: 1.0, y: 1.0 }).unwrap();
+        }
+
+        // Verify all entities have both components
+        for &entity in &entities {
+            assert!(world.get::<Position>(entity).is_some());
+            assert!(world.get::<Velocity>(entity).is_some());
+        }
+    }
 }
