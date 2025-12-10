@@ -1,0 +1,22 @@
+[package]
+name = "ecs-complete"
+version = "0.1.0"
+edition = "2024"
+
+
+[dependencies]
+slotmap = "1.0"
+rayon = "1.8"
+parking_lot = "0.12"
+serde = { version = "1.0", features = ["derive"], optional = true }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[features]
+default = []
+serialize = ["serde"]
+
+[[bench]]
+name = "ecs_bench"
+harness = false
